@@ -85,7 +85,11 @@ fi
 # Install Node.js (for Svelte frontend later)
 log_info "Installing Node.js ${NODE_VERSION}..."
 if ! command -v node &> /dev/null; then
-    curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | $SUDO -E bash -
+    if [ "$EUID" -eq 0 ]; then
+        curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash -
+    else
+        curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | sudo -E bash -
+    fi
     $SUDO apt install -y nodejs
     log_info "Node.js installed: $(node --version)"
     log_info "npm installed: $(npm --version)"
