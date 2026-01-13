@@ -32,20 +32,23 @@ log_error() {
     echo -e "${RED}✗${NC} $1"
 }
 
-# Check if running as root
-if [ "$EUID" -eq 0 ]; then 
-    log_error "Please run this script as a regular user with sudo privileges"
-    exit 1
+# Determine if we need sudo
+SUDO=""
+if [ "$EUID" -ne 0 ]; then
+    SUDO="sudo"
+    log_info "Running as regular user (will use sudo)"
+else
+    log_info "Running as root"
 fi
 
 # Update system
 log_info "Updating system packages..."
-sudo apt update
-sudo apt upgrade -y
+$SUDO apt update
+$SUDO apt upgrade -y
 
 # Install basic dependencies
 log_info "Installing basic dependencies..."
-sudo apt install -y \
+$SUDO apt install -y \
     curl \
     wget \
     git \
@@ -61,13 +64,17 @@ log_info "Installing Go ${GO_VERSION}..."
 if ! command -v go &> /dev/null; then
     cd /tmp
     wget https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz
-    sudo rm -rf /usr/local/go
-    sudo tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz
+    $SUDO rm -rf /usr/local/go
+    $SUDO tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz
     
     # Add to PATH if not already there
-    if ! grep -q "/usr/local/go/bin" ~/.bashrc; then
-        echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-        echo 'export PATH=$PATH:$HOME/go/bin' >> ~/.bashrc
+    SHELL_RC="$HOME/.bashrc"
+    if [ "$EUID" -eq 0 ]; then
+        SHELL_RC="/root/.bashrc"
+    fi
+    if ! grep -q "/usr/local/go/bin" "$SHELL_RC"; then
+        echo 'export PATH=$PATH:/usr/local/go/bin' >> "$SHELL_RC"
+        echo 'export PATH=$PATH:$HOME/go/bin' >> "$SHELL_RC"
     fi
     export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
     log_info "Go installed: $(go version)"
@@ -78,8 +85,8 @@ fi
 # Install Node.js (for Svelte frontend later)
 log_info "Installing Node.js ${NODE_VERSION}..."
 if ! command -v node &> /dev/null; then
-    curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | sudo -E bash -
-    sudo apt install -y nodejs
+    curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | $SUDO -E bash -
+    $SUDO apt install -y nodejs
     log_info "Node.js installed: $(node --version)"
     log_info "npm installed: $(npm --version)"
 else
@@ -89,11 +96,13 @@ fi
 # Install Docker (for local testing, not required but useful)
 log_info "Installing Docker..."
 if ! command -v docker &> /dev/null; then
-    sudo apt install -y docker.io
-    sudo systemctl enable docker
-    sudo systemctl start docker
-    sudo usermod -aG docker $USER
-    log_warn "Docker installed. You need to log out and back in for group changes to take effect"
+    $SUDO apt install -y docker.io
+    $SUDO systemctl enable docker
+    $SUDO systemctl start docker
+    if [ "$EUID" -ne 0 ]; then
+        $SUDO usermod -aG docker $USER
+        log_warn "Docker installed. You need to log out and back in for group changes to take effect"
+    fi
 else
     log_info "Docker already installed"
 fi
@@ -108,12 +117,16 @@ if ! command -v k3s &> /dev/null; then
     # Wait for K3S to be ready
     log_info "Waiting for K3S to be ready..."
     sleep 10
-    sudo k3s kubectl wait --for=condition=Ready nodes --all --timeout=60s
+    k3s kubectl wait --for=condition=Ready nodes --all --timeout=60s
     
     # Setup kubeconfig for current user
     mkdir -p ~/.kube
-    sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
-    sudo chown $USER:$USER ~/.kube/config
+    if [ "$EUID" -eq 0 ]; then
+        cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+    else
+        $SUDO cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+        $SUDO chown $USER:$USER ~/.kube/config
+    fi
     
     log_info "K3S installed successfully"
 else
@@ -124,7 +137,7 @@ fi
 log_info "Setting up kubectl..."
 if ! command -v kubectl &> /dev/null; then
     curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-    sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+    $SUDO install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
     rm kubectl
     log_info "kubectl installed: $(kubectl version --client --short 2>/dev/null || kubectl version --client)"
 else
@@ -378,29 +391,35 @@ go install github.com/air-verse/air@latest  # For live reload during dev
 
 # Install PostgreSQL client tools (for local access)
 log_info "Installing PostgreSQL client..."
-sudo apt install -y postgresql-client
+$SUDO apt install -y postgresql-client
 
 # Port forward PostgreSQL for local development (as a background service)
 log_info "Setting up PostgreSQL port forward..."
-cat <<EOF | sudo tee /etc/systemd/system/superfly-postgres-forward.service > /dev/null
+SERVICE_USER="$USER"
+if [ "$EUID" -eq 0 ]; then
+    SERVICE_USER="root"
+fi
+
+cat <<EOF | $SUDO tee /etc/systemd/system/superfly-postgres-forward.service > /dev/null
 [Unit]
 Description=Superfly PostgreSQL Port Forward
 After=network.target
 
 [Service]
 Type=simple
-User=$USER
+User=$SERVICE_USER
 ExecStart=/usr/local/bin/kubectl port-forward -n superfly-system svc/postgres 5432:5432
 Restart=always
 RestartSec=10
+Environment="KUBECONFIG=$HOME/.kube/config"
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-sudo systemctl daemon-reload
-sudo systemctl enable superfly-postgres-forward.service
-sudo systemctl start superfly-postgres-forward.service
+$SUDO systemctl daemon-reload
+$SUDO systemctl enable superfly-postgres-forward.service
+$SUDO systemctl start superfly-postgres-forward.service
 
 # Create development .env file template
 log_info "Creating development environment template..."
