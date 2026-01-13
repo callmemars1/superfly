@@ -60,7 +60,7 @@ On your Debian 13 server:
 
 ```bash
 # Download and run the setup script
-curl -fsSL https://raw.githubusercontent.com/yourusername/superfly/main/dev-setup.sh -o dev-setup.sh
+curl -fsSL https://raw.githubusercontent.com/callmemars1/superfly/main/dev-setup.sh -o dev-setup.sh
 chmod +x dev-setup.sh
 ./dev-setup.sh
 ```
@@ -381,7 +381,16 @@ kubectl logs <pod-name> -n superfly-system
 
 MIT
 
+## Links
+
+- **Repository**: https://github.com/callmemars1/superfly
+- **Domain**: superfly.smartynov.com
+- **Documentation**: See guides above
+
 ## Contributing
 
 This is a work in progress. Contributions welcome!
-# superfly
+
+## License
+
+MIT
